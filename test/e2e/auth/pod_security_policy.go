@@ -53,7 +53,7 @@ var _ = SIGDescribe("PodSecurityPolicy", func() {
 	var c clientset.Interface
 	var ns string // Test namespace, for convenience
 	ginkgo.BeforeEach(func() {
-		if !framework.IsPodSecurityPolicyEnabled(f) {
+		if !framework.IsPodSecurityPolicyEnabled(f.ClientSet) {
 			framework.Skipf("PodSecurityPolicy not enabled")
 		}
 		if !auth.IsRBACEnabled(f.ClientSet.RbacV1()) {

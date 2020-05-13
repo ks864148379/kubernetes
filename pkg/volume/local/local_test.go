@@ -26,13 +26,14 @@ import (
 	"runtime"
 	"testing"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	utiltesting "k8s.io/client-go/util/testing"
 	"k8s.io/kubernetes/pkg/util/mount"
 	"k8s.io/kubernetes/pkg/volume"
 	volumetest "k8s.io/kubernetes/pkg/volume/testing"
+	"k8s.io/kubernetes/pkg/volume/util/hostutil"
 )
 
 const (
@@ -109,10 +110,10 @@ func getDeviceMountablePluginWithBlockPath(t *testing.T, isBlockDevice bool) (st
 	}
 
 	plugMgr := volume.VolumePluginMgr{}
-	var pathToFSType map[string]mount.FileType
+	var pathToFSType map[string]hostutil.FileType
 	if isBlockDevice {
-		pathToFSType = map[string]mount.FileType{
-			tmpDir: mount.FileTypeBlockDev,
+		pathToFSType = map[string]hostutil.FileType{
+			tmpDir: hostutil.FileTypeBlockDev,
 		}
 	}
 
@@ -421,44 +422,97 @@ func testFSGroupMount(plug volume.VolumePlugin, pod *v1.Pod, tmpDir string, fsGr
 }
 
 func TestConstructVolumeSpec(t *testing.T) {
-	tmpDir, plug := getPlugin(t)
-	defer os.RemoveAll(tmpDir)
-
-	volPath := filepath.Join(tmpDir, testMountPath)
-	spec, err := plug.ConstructVolumeSpec(testPVName, volPath)
-	if err != nil {
-		t.Errorf("ConstructVolumeSpec() failed: %v", err)
-	}
-	if spec == nil {
-		t.Fatalf("ConstructVolumeSpec() returned nil")
-	}
-
-	volName := spec.Name()
-	if volName != testPVName {
-		t.Errorf("Expected volume name %q, got %q", testPVName, volName)
-	}
-
-	if spec.Volume != nil {
-		t.Errorf("Volume object returned, expected nil")
-	}
-
-	pv := spec.PersistentVolume
-	if pv == nil {
-		t.Fatalf("PersistentVolume object nil")
-	}
-
-	if spec.PersistentVolume.Spec.VolumeMode == nil {
-		t.Fatalf("Volume mode has not been set.")
-	}
-
-	if *spec.PersistentVolume.Spec.VolumeMode != v1.PersistentVolumeFilesystem {
-		t.Errorf("Unexpected volume mode %q", *spec.PersistentVolume.Spec.VolumeMode)
+	tests := []struct {
+		name         string
+		mountPoints  []mount.MountPoint
+		expectedPath string
+	}{
+		{
+			name: "filesystem volume with directory source",
+			mountPoints: []mount.MountPoint{
+				{
+					Device: "/mnt/disk/ssd0",
+					Path:   "pods/poduid/volumes/kubernetes.io~local-volume/pvA",
+				},
+			},
+			expectedPath: "",
+		},
+		{
+			name: "filesystem volume with block source",
+			mountPoints: []mount.MountPoint{
+				{
+					Device: "/dev/loop0",
+					Path:   testMountPath,
+				},
+				{
+					Device: "/dev/loop0",
+					Path:   testBlockFormattingToFSGlobalPath,
+				},
+			},
+			expectedPath: "/dev/loop0",
+		},
 	}
 
-	ls := pv.Spec.PersistentVolumeSource.Local
-	if ls == nil {
-		t.Fatalf("LocalVolumeSource object nil")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir, err := utiltesting.MkTmpdir("localVolumeTest")
+			if err != nil {
+				t.Fatalf("can't make a temp dir: %v", err)
+			}
+			defer os.RemoveAll(tmpDir)
+			plug := &localVolumePlugin{
+				host: volumetest.NewFakeVolumeHost(tmpDir, nil, nil),
+			}
+			mounter := plug.host.GetMounter(plug.GetPluginName())
+			fakeMountPoints := []mount.MountPoint{}
+			for _, mp := range tt.mountPoints {
+				fakeMountPoint := mp
+				fakeMountPoint.Path = filepath.Join(tmpDir, mp.Path)
+				fakeMountPoints = append(fakeMountPoints, fakeMountPoint)
+			}
+			mounter.(*mount.FakeMounter).MountPoints = fakeMountPoints
+			volPath := filepath.Join(tmpDir, testMountPath)
+			spec, err := plug.ConstructVolumeSpec(testPVName, volPath)
+			if err != nil {
+				t.Errorf("ConstructVolumeSpec() failed: %v", err)
+			}
+			if spec == nil {
+				t.Fatalf("ConstructVolumeSpec() returned nil")
+			}
+
+			volName := spec.Name()
+			if volName != testPVName {
+				t.Errorf("Expected volume name %q, got %q", testPVName, volName)
+			}
+
+			if spec.Volume != nil {
+				t.Errorf("Volume object returned, expected nil")
+			}
+
+			pv := spec.PersistentVolume
+			if pv == nil {
+				t.Fatalf("PersistentVolume object nil")
+			}
+
+			if spec.PersistentVolume.Spec.VolumeMode == nil {
+				t.Fatalf("Volume mode has not been set.")
+			}
+
+			if *spec.PersistentVolume.Spec.VolumeMode != v1.PersistentVolumeFilesystem {
+				t.Errorf("Unexpected volume mode %q", *spec.PersistentVolume.Spec.VolumeMode)
+			}
+
+			ls := pv.Spec.PersistentVolumeSource.Local
+			if ls == nil {
+				t.Fatalf("LocalVolumeSource object nil")
+			}
+
+			if pv.Spec.PersistentVolumeSource.Local.Path != tt.expectedPath {
+				t.Fatalf("Unexpected path got %q, expected %q", pv.Spec.PersistentVolumeSource.Local.Path, tt.expectedPath)
+			}
+		})
 	}
+
 }
 
 func TestConstructBlockVolumeSpec(t *testing.T) {

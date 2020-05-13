@@ -14,6 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# shellcheck disable=SC2034 # Variables sourced in other scripts.
+
 # Common utilities, variables and checks for all build scripts.
 set -o errexit
 set -o nounset
@@ -39,6 +41,9 @@ source "${KUBE_ROOT}/hack/lib/init.sh"
 # Constants
 readonly KUBE_BUILD_IMAGE_REPO=kube-build
 readonly KUBE_BUILD_IMAGE_CROSS_TAG="$(cat "${KUBE_ROOT}/build/build-image/cross/VERSION")"
+
+readonly KUBE_DOCKER_REGISTRY="${KUBE_DOCKER_REGISTRY:-k8s.gcr.io}"
+readonly KUBE_BASE_IMAGE_REGISTRY="${KUBE_BASE_IMAGE_REGISTRY:-k8s.gcr.io}"
 
 # This version number is used to cause everyone to rebuild their data containers
 # and build image.  This is especially useful for automated build systems like
@@ -94,11 +99,10 @@ kube::build::get_docker_wrapped_binaries() {
   ### If you change any of these lists, please also update DOCKERIZED_BINARIES
   ### in build/BUILD. And kube::golang::server_image_targets
   local targets=(
-    cloud-controller-manager,"k8s.gcr.io/debian-base-${arch}:${debian_base_version}"
-    kube-apiserver,"k8s.gcr.io/debian-base-${arch}:${debian_base_version}"
-    kube-controller-manager,"k8s.gcr.io/debian-base-${arch}:${debian_base_version}"
-    kube-scheduler,"k8s.gcr.io/debian-base-${arch}:${debian_base_version}"
-    kube-proxy,"k8s.gcr.io/debian-iptables-${arch}:${debian_iptables_version}"
+    "kube-apiserver,${KUBE_BASE_IMAGE_REGISTRY}/debian-base-${arch}:${debian_base_version}"
+    "kube-controller-manager,${KUBE_BASE_IMAGE_REGISTRY}/debian-base-${arch}:${debian_base_version}"
+    "kube-scheduler,${KUBE_BASE_IMAGE_REGISTRY}/debian-base-${arch}:${debian_base_version}"
+    "kube-proxy,${KUBE_BASE_IMAGE_REGISTRY}/debian-iptables-${arch}:${debian_iptables_version}"
   )
 
   echo "${targets[@]}"

@@ -39,7 +39,7 @@ retry() {
 export PATH=${GOPATH}/bin:${PWD}/third_party/etcd:/usr/local/go/bin:${PATH}
 
 go install k8s.io/kubernetes/vendor/github.com/cespare/prettybench
-go install k8s.io/kubernetes/vendor/github.com/jstemmer/go-junit-report
+go install k8s.io/kubernetes/vendor/gotest.tools/gotestsum
 
 # Disable the Go race detector.
 export KUBE_RACE=" "
@@ -49,7 +49,7 @@ export ARTIFACTS=${ARTIFACTS:-"${WORKSPACE}/artifacts"}
 export FULL_LOG="true"
 
 mkdir -p "${ARTIFACTS}"
-cd /go/src/k8s.io/kubernetes
+cd "${GOPATH}/src/k8s.io/kubernetes"
 
 ./hack/install-etcd.sh
 

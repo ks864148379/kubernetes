@@ -259,6 +259,7 @@ func (s *BuiltInAuthenticationOptions) AddFlags(fs *pflag.FlagSet) {
 		fs.StringVar(&s.PasswordFile.BasicAuthFile, "basic-auth-file", s.PasswordFile.BasicAuthFile, ""+
 			"If set, the file that will be used to admit requests to the secure port of the API server "+
 			"via http basic authentication.")
+		fs.MarkDeprecated("basic-auth-file", "Basic authentication mode is deprecated and will be removed in a future release. It is not recommended for production environments.")
 	}
 
 	if s.RequestHeader != nil {
@@ -307,7 +308,7 @@ func (s *BuiltInAuthenticationOptions) AddFlags(fs *pflag.FlagSet) {
 	}
 }
 
-func (s *BuiltInAuthenticationOptions) ToAuthenticationConfig() kubeauthenticator.Config {
+func (s *BuiltInAuthenticationOptions) ToAuthenticationConfig() (kubeauthenticator.Config, error) {
 	ret := kubeauthenticator.Config{
 		TokenSuccessCacheTTL: s.TokenSuccessCacheTTL,
 		TokenFailureCacheTTL: s.TokenFailureCacheTTL,
@@ -322,7 +323,11 @@ func (s *BuiltInAuthenticationOptions) ToAuthenticationConfig() kubeauthenticato
 	}
 
 	if s.ClientCert != nil {
-		ret.ClientCAFile = s.ClientCert.ClientCA
+		var err error
+		ret.ClientCAContentProvider, err = s.ClientCert.GetClientCAContentProvider()
+		if err != nil {
+			return kubeauthenticator.Config{}, err
+		}
 	}
 
 	if s.OIDC != nil {
@@ -342,7 +347,11 @@ func (s *BuiltInAuthenticationOptions) ToAuthenticationConfig() kubeauthenticato
 	}
 
 	if s.RequestHeader != nil {
-		ret.RequestHeaderConfig = s.RequestHeader.ToAuthenticationRequestHeaderConfig()
+		var err error
+		ret.RequestHeaderConfig, err = s.RequestHeader.ToAuthenticationRequestHeaderConfig()
+		if err != nil {
+			return kubeauthenticator.Config{}, err
+		}
 	}
 
 	ret.APIAudiences = s.APIAudiences
@@ -373,7 +382,7 @@ func (s *BuiltInAuthenticationOptions) ToAuthenticationConfig() kubeauthenticato
 		}
 	}
 
-	return ret
+	return ret, nil
 }
 
 func (o *BuiltInAuthenticationOptions) ApplyTo(c *genericapiserver.Config) error {
@@ -381,15 +390,24 @@ func (o *BuiltInAuthenticationOptions) ApplyTo(c *genericapiserver.Config) error
 		return nil
 	}
 
-	var err error
 	if o.ClientCert != nil {
-		if err = c.Authentication.ApplyClientCert(o.ClientCert.ClientCA, c.SecureServing); err != nil {
+		clientCertificateCAContentProvider, err := o.ClientCert.GetClientCAContentProvider()
+		if err != nil {
+			return fmt.Errorf("unable to load client CA file: %v", err)
+		}
+		if err = c.Authentication.ApplyClientCert(clientCertificateCAContentProvider, c.SecureServing); err != nil {
 			return fmt.Errorf("unable to load client CA file: %v", err)
 		}
 	}
 	if o.RequestHeader != nil {
-		if err = c.Authentication.ApplyClientCert(o.RequestHeader.ClientCAFile, c.SecureServing); err != nil {
-			return fmt.Errorf("unable to load client CA file: %v", err)
+		requestHeaderConfig, err := o.RequestHeader.ToAuthenticationRequestHeaderConfig()
+		if err != nil {
+			return fmt.Errorf("unable to create request header authentication config: %v", err)
+		}
+		if requestHeaderConfig != nil {
+			if err = c.Authentication.ApplyClientCert(requestHeaderConfig.CAContentProvider, c.SecureServing); err != nil {
+				return fmt.Errorf("unable to load client CA file: %v", err)
+			}
 		}
 	}
 

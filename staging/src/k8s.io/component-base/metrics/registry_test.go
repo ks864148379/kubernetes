@@ -22,6 +22,7 @@ import (
 	"github.com/blang/semver"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
+
 	apimachineryversion "k8s.io/apimachinery/pkg/version"
 )
 
@@ -44,7 +45,7 @@ var (
 			Subsystem:         "subsystem",
 			StabilityLevel:    ALPHA,
 			Help:              "counter help",
-			DeprecatedVersion: &v115,
+			DeprecatedVersion: "1.15.0",
 		},
 	)
 	alphaHiddenCounter = NewCounter(
@@ -54,10 +55,43 @@ var (
 			Subsystem:         "subsystem",
 			StabilityLevel:    ALPHA,
 			Help:              "counter help",
-			DeprecatedVersion: &v114,
+			DeprecatedVersion: "1.14.0",
 		},
 	)
 )
+
+func TestShouldHide(t *testing.T) {
+	currentVersion := parseVersion(apimachineryversion.Info{
+		Major:      "1",
+		Minor:      "17",
+		GitVersion: "v1.17.1-alpha-1.12345",
+	})
+
+	var tests = []struct {
+		desc              string
+		deprecatedVersion string
+		shouldHide        bool
+	}{
+		{
+			desc:              "current minor release should not be hidden",
+			deprecatedVersion: "1.17.0",
+			shouldHide:        false,
+		},
+		{
+			desc:              "older minor release should be hidden",
+			deprecatedVersion: "1.16.0",
+			shouldHide:        true,
+		},
+	}
+
+	for _, test := range tests {
+		tc := test
+		t.Run(tc.desc, func(t *testing.T) {
+			result := shouldHide(&currentVersion, parseSemver(tc.deprecatedVersion))
+			assert.Equalf(t, tc.shouldHide, result, "expected should hide %v, but got %v", tc.shouldHide, result)
+		})
+	}
+}
 
 func TestRegister(t *testing.T) {
 	var tests = []struct {
@@ -109,7 +143,7 @@ func TestRegister(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.desc, func(t *testing.T) {
-			registry := NewKubeRegistry(apimachineryversion.Info{
+			registry := newKubeRegistry(apimachineryversion.Info{
 				Major:      "1",
 				Minor:      "15",
 				GitVersion: "v1.15.0-alpha-1.12345",
@@ -180,7 +214,7 @@ func TestMustRegister(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.desc, func(t *testing.T) {
-			registry := NewKubeRegistry(apimachineryversion.Info{
+			registry := newKubeRegistry(apimachineryversion.Info{
 				Major:      "1",
 				Minor:      "15",
 				GitVersion: "v1.15.0-alpha-1.12345",
@@ -199,7 +233,7 @@ func TestMustRegister(t *testing.T) {
 
 }
 func TestShowHiddenMetric(t *testing.T) {
-	registry := NewKubeRegistry(apimachineryversion.Info{
+	registry := newKubeRegistry(apimachineryversion.Info{
 		Major:      "1",
 		Minor:      "15",
 		GitVersion: "v1.15.0-alpha-1.12345",
@@ -209,9 +243,8 @@ func TestShowHiddenMetric(t *testing.T) {
 	registry.MustRegister(alphaHiddenCounter)
 
 	ms, err := registry.Gather()
-	if len(ms) != expectedMetricCount {
-		t.Errorf("Got %v metrics, Want: %v metrics", len(ms), expectedMetricCount)
-	}
+	assert.Equalf(t, expectedMetricCount, len(ms), "Got %v metrics, Want: %v metrics", len(ms), expectedMetricCount)
+
 	showHidden.Store(true)
 	defer showHidden.Store(false)
 	registry.MustRegister(NewCounter(
@@ -221,17 +254,13 @@ func TestShowHiddenMetric(t *testing.T) {
 			Subsystem:         "subsystem",
 			StabilityLevel:    ALPHA,
 			Help:              "counter help",
-			DeprecatedVersion: &v114,
+			DeprecatedVersion: "1.14.0",
 		},
 	))
 	expectedMetricCount = 1
 
 	ms, err = registry.Gather()
-	if len(ms) != expectedMetricCount {
-		t.Errorf("Got %v metrics, Want: %v metrics", len(ms), expectedMetricCount)
-	}
-	if err != nil {
-		t.Fatalf("Gather failed %v", err)
-	}
+	assert.Equalf(t, expectedMetricCount, len(ms), "Got %v metrics, Want: %v metrics", len(ms), expectedMetricCount)
+	assert.Nil(t, err, "Gather failed %v", err)
 
 }

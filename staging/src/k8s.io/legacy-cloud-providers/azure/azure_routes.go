@@ -1,3 +1,5 @@
+// +build !providerless
+
 /*
 Copyright 2016 The Kubernetes Authors.
 
@@ -21,7 +23,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2018-08-01/network"
+	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2019-06-01/network"
 	"github.com/Azure/go-autorest/autorest/to"
 
 	"k8s.io/apimachinery/pkg/types"
@@ -32,21 +34,19 @@ import (
 	// Azure route controller changes behavior if ipv6dual stack feature is turned on
 	// remove this once the feature graduates
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
-	"k8s.io/component-base/featuregate"
 )
 
 // copied to minimize the number of cross reference
 // and exceptions in publishing and allowed imports.
 const (
-	IPv6DualStack      featuregate.Feature = "IPv6DualStack"
-	routeNameFmt                           = "%s____%s"
-	routeNameSeparator                     = "____"
+	routeNameFmt       = "%s____%s"
+	routeNameSeparator = "____"
 )
 
 // ListRoutes lists all managed routes that belong to the specified clusterName
 func (az *Cloud) ListRoutes(ctx context.Context, clusterName string) ([]*cloudprovider.Route, error) {
 	klog.V(10).Infof("ListRoutes: START clusterName=%q", clusterName)
-	routeTable, existsRouteTable, err := az.getRouteTable()
+	routeTable, existsRouteTable, err := az.getRouteTable(cacheReadTypeDefault)
 	routes, err := processRoutes(routeTable, existsRouteTable, err)
 	if err != nil {
 		return nil, err
@@ -102,7 +102,7 @@ func processRoutes(routeTable network.RouteTable, exists bool, err error) ([]*cl
 }
 
 func (az *Cloud) createRouteTableIfNotExists(clusterName string, kubeRoute *cloudprovider.Route) error {
-	if _, existsRouteTable, err := az.getRouteTable(); err != nil {
+	if _, existsRouteTable, err := az.getRouteTable(cacheReadTypeDefault); err != nil {
 		klog.V(2).Infof("createRouteTableIfNotExists error: couldn't get routetable. clusterName=%q instance=%q cidr=%q", clusterName, kubeRoute.TargetNode, kubeRoute.DestinationCIDR)
 		return err
 	} else if existsRouteTable {

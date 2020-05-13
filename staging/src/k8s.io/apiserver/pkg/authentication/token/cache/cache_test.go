@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pborman/uuid"
+	"github.com/google/uuid"
 
 	"k8s.io/apimachinery/pkg/util/clock"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
@@ -32,6 +32,9 @@ func TestSimpleCache(t *testing.T) {
 	testCache(newSimpleCache(4096, clock.RealClock{}), t)
 }
 
+// Note: the performance profile of this benchmark may not match that in the production.
+// When making change to SimpleCache, run test with and without concurrency to better understand the impact.
+// This is a tool to test and measure high concurrency of the cache in isolation and not to the Kubernetes usage of the Cache.
 func BenchmarkSimpleCache(b *testing.B) {
 	benchmarkCache(newSimpleCache(4096, clock.RealClock{}), b)
 }
@@ -47,7 +50,7 @@ func BenchmarkStripedCache(b *testing.B) {
 func benchmarkCache(cache cache, b *testing.B) {
 	keys := []string{}
 	for i := 0; i < b.N; i++ {
-		key := uuid.NewRandom().String()
+		key := uuid.New().String()
 		keys = append(keys, key)
 	}
 

@@ -35,6 +35,8 @@ import (
 )
 
 func TestVisitContainers(t *testing.T) {
+	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.EphemeralContainers, true)()
+
 	testCases := []struct {
 		description string
 		haveSpec    *api.PodSpec
@@ -80,6 +82,37 @@ func TestVisitContainers(t *testing.T) {
 			[]string{"i1", "i2", "c1", "c2"},
 		},
 		{
+			"ephemeral containers",
+			&api.PodSpec{
+				Containers: []api.Container{
+					{Name: "c1"},
+					{Name: "c2"},
+				},
+				EphemeralContainers: []api.EphemeralContainer{
+					{EphemeralContainerCommon: api.EphemeralContainerCommon{Name: "e1"}},
+				},
+			},
+			[]string{"c1", "c2", "e1"},
+		},
+		{
+			"all container types",
+			&api.PodSpec{
+				Containers: []api.Container{
+					{Name: "c1"},
+					{Name: "c2"},
+				},
+				InitContainers: []api.Container{
+					{Name: "i1"},
+					{Name: "i2"},
+				},
+				EphemeralContainers: []api.EphemeralContainer{
+					{EphemeralContainerCommon: api.EphemeralContainerCommon{Name: "e1"}},
+					{EphemeralContainerCommon: api.EphemeralContainerCommon{Name: "e2"}},
+				},
+			},
+			[]string{"i1", "i2", "c1", "c2", "e1", "e2"},
+		},
+		{
 			"dropping fields",
 			&api.PodSpec{
 				Containers: []api.Container{
@@ -90,8 +123,12 @@ func TestVisitContainers(t *testing.T) {
 					{Name: "i1"},
 					{Name: "i2", SecurityContext: &api.SecurityContext{}},
 				},
+				EphemeralContainers: []api.EphemeralContainer{
+					{EphemeralContainerCommon: api.EphemeralContainerCommon{Name: "e1"}},
+					{EphemeralContainerCommon: api.EphemeralContainerCommon{Name: "e2", SecurityContext: &api.SecurityContext{}}},
+				},
 			},
-			[]string{"i1", "i2", "c1", "c2"},
+			[]string{"i1", "i2", "c1", "c2", "e1", "e2"},
 		},
 	}
 
@@ -117,10 +154,17 @@ func TestVisitContainers(t *testing.T) {
 				t.Errorf("VisitContainers() for test case %q: got SecurityContext %#v for init container %v, wanted nil", tc.description, c.SecurityContext, c.Name)
 			}
 		}
+		for _, c := range tc.haveSpec.EphemeralContainers {
+			if c.SecurityContext != nil {
+				t.Errorf("VisitContainers() for test case %q: got SecurityContext %#v for ephemeral container %v, wanted nil", tc.description, c.SecurityContext, c.Name)
+			}
+		}
 	}
 }
 
 func TestPodSecrets(t *testing.T) {
+	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.EphemeralContainers, true)()
+
 	// Stub containing all possible secret references in a pod.
 	// The names of the referenced secrets match struct paths detected by reflection.
 	pod := &api.Pod{
@@ -195,6 +239,17 @@ func TestPodSecrets(t *testing.T) {
 					CSI: &api.CSIVolumeSource{
 						NodePublishSecretRef: &api.LocalObjectReference{
 							Name: "Spec.Volumes[*].VolumeSource.CSI.NodePublishSecretRef"}}}}},
+			EphemeralContainers: []api.EphemeralContainer{{
+				EphemeralContainerCommon: api.EphemeralContainerCommon{
+					EnvFrom: []api.EnvFromSource{{
+						SecretRef: &api.SecretEnvSource{
+							LocalObjectReference: api.LocalObjectReference{
+								Name: "Spec.EphemeralContainers[*].EphemeralContainerCommon.EnvFrom[*].SecretRef"}}}},
+					Env: []api.EnvVar{{
+						ValueFrom: &api.EnvVarSource{
+							SecretKeyRef: &api.SecretKeySelector{
+								LocalObjectReference: api.LocalObjectReference{
+									Name: "Spec.EphemeralContainers[*].EphemeralContainerCommon.Env[*].ValueFrom.SecretKeyRef"}}}}}}}},
 		},
 	}
 	extractedNames := sets.NewString()
@@ -212,6 +267,8 @@ func TestPodSecrets(t *testing.T) {
 	expectedSecretPaths := sets.NewString(
 		"Spec.Containers[*].EnvFrom[*].SecretRef",
 		"Spec.Containers[*].Env[*].ValueFrom.SecretKeyRef",
+		"Spec.EphemeralContainers[*].EphemeralContainerCommon.EnvFrom[*].SecretRef",
+		"Spec.EphemeralContainers[*].EphemeralContainerCommon.Env[*].ValueFrom.SecretKeyRef",
 		"Spec.ImagePullSecrets",
 		"Spec.InitContainers[*].EnvFrom[*].SecretRef",
 		"Spec.InitContainers[*].Env[*].ValueFrom.SecretKeyRef",
@@ -290,6 +347,8 @@ func collectResourcePaths(t *testing.T, resourcename string, path *field.Path, n
 }
 
 func TestPodConfigmaps(t *testing.T) {
+	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.EphemeralContainers, true)()
+
 	// Stub containing all possible ConfigMap references in a pod.
 	// The names of the referenced ConfigMaps match struct paths detected by reflection.
 	pod := &api.Pod{
@@ -304,6 +363,17 @@ func TestPodConfigmaps(t *testing.T) {
 						ConfigMapKeyRef: &api.ConfigMapKeySelector{
 							LocalObjectReference: api.LocalObjectReference{
 								Name: "Spec.Containers[*].Env[*].ValueFrom.ConfigMapKeyRef"}}}}}}},
+			EphemeralContainers: []api.EphemeralContainer{{
+				EphemeralContainerCommon: api.EphemeralContainerCommon{
+					EnvFrom: []api.EnvFromSource{{
+						ConfigMapRef: &api.ConfigMapEnvSource{
+							LocalObjectReference: api.LocalObjectReference{
+								Name: "Spec.EphemeralContainers[*].EphemeralContainerCommon.EnvFrom[*].ConfigMapRef"}}}},
+					Env: []api.EnvVar{{
+						ValueFrom: &api.EnvVarSource{
+							ConfigMapKeyRef: &api.ConfigMapKeySelector{
+								LocalObjectReference: api.LocalObjectReference{
+									Name: "Spec.EphemeralContainers[*].EphemeralContainerCommon.Env[*].ValueFrom.ConfigMapKeyRef"}}}}}}}},
 			InitContainers: []api.Container{{
 				EnvFrom: []api.EnvFromSource{{
 					ConfigMapRef: &api.ConfigMapEnvSource{
@@ -338,6 +408,8 @@ func TestPodConfigmaps(t *testing.T) {
 	expectedPaths := sets.NewString(
 		"Spec.Containers[*].EnvFrom[*].ConfigMapRef",
 		"Spec.Containers[*].Env[*].ValueFrom.ConfigMapKeyRef",
+		"Spec.EphemeralContainers[*].EphemeralContainerCommon.EnvFrom[*].ConfigMapRef",
+		"Spec.EphemeralContainers[*].EphemeralContainerCommon.Env[*].ValueFrom.ConfigMapKeyRef",
 		"Spec.InitContainers[*].EnvFrom[*].ConfigMapRef",
 		"Spec.InitContainers[*].Env[*].ValueFrom.ConfigMapKeyRef",
 		"Spec.Volumes[*].VolumeSource.Projected.Sources[*].ConfigMap",
@@ -1863,52 +1935,51 @@ func TestDropSubPathExpr(t *testing.T) {
 		},
 	}
 
-	for _, enabled := range []bool{true, false} {
-		for _, oldPodInfo := range podInfo {
-			for _, newPodInfo := range podInfo {
-				oldPodHasSubpaths, oldPod := oldPodInfo.hasSubpaths, oldPodInfo.pod()
-				newPodHasSubpaths, newPod := newPodInfo.hasSubpaths, newPodInfo.pod()
-				if newPod == nil {
-					continue
+	enabled := true
+	for _, oldPodInfo := range podInfo {
+		for _, newPodInfo := range podInfo {
+			oldPodHasSubpaths, oldPod := oldPodInfo.hasSubpaths, oldPodInfo.pod()
+			newPodHasSubpaths, newPod := newPodInfo.hasSubpaths, newPodInfo.pod()
+			if newPod == nil {
+				continue
+			}
+
+			t.Run(fmt.Sprintf("feature enabled=%v, old pod %v, new pod %v", enabled, oldPodInfo.description, newPodInfo.description), func(t *testing.T) {
+				defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.VolumeSubpathEnvExpansion, enabled)()
+
+				var oldPodSpec *api.PodSpec
+				if oldPod != nil {
+					oldPodSpec = &oldPod.Spec
+				}
+				dropDisabledFields(&newPod.Spec, nil, oldPodSpec, nil)
+
+				// old pod should never be changed
+				if !reflect.DeepEqual(oldPod, oldPodInfo.pod()) {
+					t.Errorf("old pod changed: %v", diff.ObjectReflectDiff(oldPod, oldPodInfo.pod()))
 				}
 
-				t.Run(fmt.Sprintf("feature enabled=%v, old pod %v, new pod %v", enabled, oldPodInfo.description, newPodInfo.description), func(t *testing.T) {
-					defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.VolumeSubpathEnvExpansion, enabled)()
-
-					var oldPodSpec *api.PodSpec
-					if oldPod != nil {
-						oldPodSpec = &oldPod.Spec
+				switch {
+				case enabled || oldPodHasSubpaths:
+					// new pod should not be changed if the feature is enabled, or if the old pod had subpaths
+					if !reflect.DeepEqual(newPod, newPodInfo.pod()) {
+						t.Errorf("new pod changed: %v", diff.ObjectReflectDiff(newPod, newPodInfo.pod()))
 					}
-					dropDisabledFields(&newPod.Spec, nil, oldPodSpec, nil)
-
-					// old pod should never be changed
-					if !reflect.DeepEqual(oldPod, oldPodInfo.pod()) {
-						t.Errorf("old pod changed: %v", diff.ObjectReflectDiff(oldPod, oldPodInfo.pod()))
+				case newPodHasSubpaths:
+					// new pod should be changed
+					if reflect.DeepEqual(newPod, newPodInfo.pod()) {
+						t.Errorf("new pod was not changed")
 					}
-
-					switch {
-					case enabled || oldPodHasSubpaths:
-						// new pod should not be changed if the feature is enabled, or if the old pod had subpaths
-						if !reflect.DeepEqual(newPod, newPodInfo.pod()) {
-							t.Errorf("new pod changed: %v", diff.ObjectReflectDiff(newPod, newPodInfo.pod()))
-						}
-					case newPodHasSubpaths:
-						// new pod should be changed
-						if reflect.DeepEqual(newPod, newPodInfo.pod()) {
-							t.Errorf("new pod was not changed")
-						}
-						// new pod should not have subpaths
-						if !reflect.DeepEqual(newPod, podWithoutSubpaths()) {
-							t.Errorf("new pod had subpaths: %v", diff.ObjectReflectDiff(newPod, podWithoutSubpaths()))
-						}
-					default:
-						// new pod should not need to be changed
-						if !reflect.DeepEqual(newPod, newPodInfo.pod()) {
-							t.Errorf("new pod changed: %v", diff.ObjectReflectDiff(newPod, newPodInfo.pod()))
-						}
+					// new pod should not have subpaths
+					if !reflect.DeepEqual(newPod, podWithoutSubpaths()) {
+						t.Errorf("new pod had subpaths: %v", diff.ObjectReflectDiff(newPod, podWithoutSubpaths()))
 					}
-				})
-			}
+				default:
+					// new pod should not need to be changed
+					if !reflect.DeepEqual(newPod, newPodInfo.pod()) {
+						t.Errorf("new pod changed: %v", diff.ObjectReflectDiff(newPod, newPodInfo.pod()))
+					}
+				}
+			})
 		}
 	}
 }
@@ -2011,5 +2082,94 @@ func TestDropStatusPodIPs(t *testing.T) {
 				t.Errorf("%v: unexpected pod status: %v", tc.name, diff.ObjectReflectDiff(tc.podStatus, tc.comparePodStatus))
 			}
 		}()
+	}
+}
+
+func TestDropEphemeralContainers(t *testing.T) {
+	podWithEphemeralContainers := func() *api.Pod {
+		return &api.Pod{
+			Spec: api.PodSpec{
+				RestartPolicy:       api.RestartPolicyNever,
+				EphemeralContainers: []api.EphemeralContainer{{EphemeralContainerCommon: api.EphemeralContainerCommon{Name: "container1", Image: "testimage"}}},
+			},
+		}
+	}
+	podWithoutEphemeralContainers := func() *api.Pod {
+		return &api.Pod{
+			Spec: api.PodSpec{
+				RestartPolicy: api.RestartPolicyNever,
+			},
+		}
+	}
+
+	podInfo := []struct {
+		description            string
+		hasEphemeralContainers bool
+		pod                    func() *api.Pod
+	}{
+		{
+			description:            "has subpaths",
+			hasEphemeralContainers: true,
+			pod:                    podWithEphemeralContainers,
+		},
+		{
+			description:            "does not have subpaths",
+			hasEphemeralContainers: false,
+			pod:                    podWithoutEphemeralContainers,
+		},
+		{
+			description:            "is nil",
+			hasEphemeralContainers: false,
+			pod:                    func() *api.Pod { return nil },
+		},
+	}
+
+	for _, enabled := range []bool{true, false} {
+		for _, oldPodInfo := range podInfo {
+			for _, newPodInfo := range podInfo {
+				oldPodHasEphemeralContainers, oldPod := oldPodInfo.hasEphemeralContainers, oldPodInfo.pod()
+				newPodHasEphemeralContainers, newPod := newPodInfo.hasEphemeralContainers, newPodInfo.pod()
+				if newPod == nil {
+					continue
+				}
+
+				t.Run(fmt.Sprintf("feature enabled=%v, old pod %v, new pod %v", enabled, oldPodInfo.description, newPodInfo.description), func(t *testing.T) {
+					defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.EphemeralContainers, enabled)()
+
+					var oldPodSpec *api.PodSpec
+					if oldPod != nil {
+						oldPodSpec = &oldPod.Spec
+					}
+					dropDisabledFields(&newPod.Spec, nil, oldPodSpec, nil)
+
+					// old pod should never be changed
+					if !reflect.DeepEqual(oldPod, oldPodInfo.pod()) {
+						t.Errorf("old pod changed: %v", diff.ObjectReflectDiff(oldPod, oldPodInfo.pod()))
+					}
+
+					switch {
+					case enabled || oldPodHasEphemeralContainers:
+						// new pod should not be changed if the feature is enabled, or if the old pod had subpaths
+						if !reflect.DeepEqual(newPod, newPodInfo.pod()) {
+							t.Errorf("new pod changed: %v", diff.ObjectReflectDiff(newPod, newPodInfo.pod()))
+						}
+					case newPodHasEphemeralContainers:
+						// new pod should be changed
+						if reflect.DeepEqual(newPod, newPodInfo.pod()) {
+							t.Errorf("new pod was not changed")
+						}
+						// new pod should not have subpaths
+						if !reflect.DeepEqual(newPod, podWithoutEphemeralContainers()) {
+							t.Errorf("new pod had subpaths: %v", diff.ObjectReflectDiff(newPod, podWithoutEphemeralContainers()))
+						}
+					default:
+						// new pod should not need to be changed
+						if !reflect.DeepEqual(newPod, newPodInfo.pod()) {
+							t.Errorf("new pod changed: %v", diff.ObjectReflectDiff(newPod, newPodInfo.pod()))
+						}
+					}
+				})
+			}
+		}
 	}
 }

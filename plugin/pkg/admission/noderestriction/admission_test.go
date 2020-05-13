@@ -17,6 +17,7 @@ limitations under the License.
 package noderestriction
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"strings"
@@ -90,6 +91,20 @@ func makeTestPod(namespace, name, node string, mirror bool) (*api.Pod, *corev1.P
 		v1Pod.Annotations = map[string]string{api.MirrorPodAnnotationKey: "true"}
 	}
 	return corePod, v1Pod
+}
+
+func withLabels(pod *api.Pod, labels map[string]string) *api.Pod {
+	labeledPod := pod.DeepCopy()
+	if labels == nil {
+		labeledPod.Labels = nil
+		return labeledPod
+	}
+	// Clone.
+	labeledPod.Labels = map[string]string{}
+	for key, value := range labels {
+		labeledPod.Labels[key] = value
+	}
+	return labeledPod
 }
 
 func makeTestPodEviction(name string) *policy.Eviction {
@@ -300,8 +315,8 @@ func Test_nodePlugin_Admit(t *testing.T) {
 			},
 		}
 
-		csiNodeResource = storage.Resource("csinodes").WithVersion("v1beta1")
-		csiNodeKind     = schema.GroupVersionKind{Group: "storage.k8s.io", Version: "v1beta1", Kind: "CSINode"}
+		csiNodeResource = storage.Resource("csinodes").WithVersion("v1")
+		csiNodeKind     = schema.GroupVersionKind{Group: "storage.k8s.io", Version: "v1", Kind: "CSINode"}
 		nodeInfo        = &storage.CSINode{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "mynode",
@@ -336,6 +351,16 @@ func Test_nodePlugin_Admit(t *testing.T) {
 
 		existingPodsIndex = cache.NewIndexer(cache.MetaNamespaceKeyFunc, nil)
 		existingPods      = corev1lister.NewPodLister(existingPodsIndex)
+
+		labelsA = map[string]string{
+			"label-a": "value-a",
+		}
+		labelsAB = map[string]string{
+			"label-a": "value-a",
+			"label-b": "value-b",
+		}
+		aLabeledPod  = withLabels(coremypod, labelsA)
+		abLabeledPod = withLabels(coremypod, labelsAB)
 	)
 
 	existingPodsIndex.Add(v1mymirrorpod)
@@ -588,6 +613,30 @@ func Test_nodePlugin_Admit(t *testing.T) {
 			err:        "forbidden: unexpected operation",
 		},
 		{
+			name:       "forbid addition of pod status preexisting labels",
+			podsGetter: noExistingPods,
+			attributes: admission.NewAttributesRecord(abLabeledPod, aLabeledPod, podKind, coremypod.Namespace, coremypod.Name, podResource, "status", admission.Update, &metav1.UpdateOptions{}, false, mynode),
+			err:        "cannot update labels through pod status",
+		},
+		{
+			name:       "forbid deletion of pod status preexisting labels",
+			podsGetter: noExistingPods,
+			attributes: admission.NewAttributesRecord(aLabeledPod, abLabeledPod, podKind, coremypod.Namespace, coremypod.Name, podResource, "status", admission.Update, &metav1.UpdateOptions{}, false, mynode),
+			err:        "cannot update labels through pod status",
+		},
+		{
+			name:       "forbid deletion of all pod status preexisting labels",
+			podsGetter: noExistingPods,
+			attributes: admission.NewAttributesRecord(aLabeledPod, coremypod, podKind, coremypod.Namespace, coremypod.Name, podResource, "status", admission.Update, &metav1.UpdateOptions{}, false, mynode),
+			err:        "cannot update labels through pod status",
+		},
+		{
+			name:       "forbid addition of pod status labels",
+			podsGetter: noExistingPods,
+			attributes: admission.NewAttributesRecord(coremypod, aLabeledPod, podKind, coremypod.Namespace, coremypod.Name, podResource, "status", admission.Update, &metav1.UpdateOptions{}, false, mynode),
+			err:        "cannot update labels through pod status",
+		},
+		{
 			name:       "forbid update of eviction for normal pod bound to self",
 			podsGetter: existingPods,
 			attributes: admission.NewAttributesRecord(mypodEviction, nil, evictionKind, coremypod.Namespace, coremypod.Name, podResource, "eviction", admission.Update, &metav1.UpdateOptions{}, false, mynode),
@@ -825,19 +874,19 @@ func Test_nodePlugin_Admit(t *testing.T) {
 		{
 			name:       "allow create of my node pulling name from object",
 			podsGetter: noExistingPods,
-			attributes: admission.NewAttributesRecord(mynodeObj, nil, nodeKind, mynodeObj.Namespace, "", nodeResource, "", admission.Create, &metav1.CreateOptions{}, false, mynode),
+			attributes: admission.NewAttributesRecord(mynodeObj, nil, nodeKind, mynodeObj.Namespace, "mynode", nodeResource, "", admission.Create, &metav1.CreateOptions{}, false, mynode),
 			err:        "",
 		},
 		{
 			name:       "allow create of my node with taints",
 			podsGetter: noExistingPods,
-			attributes: admission.NewAttributesRecord(mynodeObjTaintA, nil, nodeKind, mynodeObj.Namespace, "", nodeResource, "", admission.Create, &metav1.CreateOptions{}, false, mynode),
+			attributes: admission.NewAttributesRecord(mynodeObjTaintA, nil, nodeKind, mynodeObj.Namespace, "mynode", nodeResource, "", admission.Create, &metav1.CreateOptions{}, false, mynode),
 			err:        "",
 		},
 		{
 			name:       "allow create of my node with labels",
 			podsGetter: noExistingPods,
-			attributes: admission.NewAttributesRecord(setAllowedCreateLabels(mynodeObj, ""), nil, nodeKind, mynodeObj.Namespace, "", nodeResource, "", admission.Create, &metav1.CreateOptions{}, false, mynode),
+			attributes: admission.NewAttributesRecord(setAllowedCreateLabels(mynodeObj, ""), nil, nodeKind, mynodeObj.Namespace, "mynode", nodeResource, "", admission.Create, &metav1.CreateOptions{}, false, mynode),
 			err:        "",
 		},
 		{
@@ -1210,7 +1259,7 @@ func Test_nodePlugin_Admit(t *testing.T) {
 				c.features = tt.features
 			}
 			c.podsGetter = tt.podsGetter
-			err := c.Admit(tt.attributes, nil)
+			err := c.Admit(context.TODO(), tt.attributes, nil)
 			if (err == nil) != (len(tt.err) == 0) {
 				t.Errorf("nodePlugin.Admit() error = %v, expected %v", err, tt.err)
 				return

@@ -45,6 +45,13 @@ func VisitContainers(podSpec *api.PodSpec, visitor ContainerVisitor) bool {
 			return false
 		}
 	}
+	if utilfeature.DefaultFeatureGate.Enabled(features.EphemeralContainers) {
+		for i := range podSpec.EphemeralContainers {
+			if !visitor((*api.Container)(&podSpec.EphemeralContainers[i].EphemeralContainerCommon)) {
+				return false
+			}
+		}
+	}
 	return true
 }
 
@@ -292,7 +299,7 @@ func DropDisabledPodFields(pod, oldPod *api.Pod) {
 	dropPodStatusDisabledFields(podStatus, oldPodStatus)
 }
 
-// dropDisabledFields removes disabled fields from the pod status
+// dropPodStatusDisabledFields removes disabled fields from the pod status
 func dropPodStatusDisabledFields(podStatus *api.PodStatus, oldPodStatus *api.PodStatus) {
 	// trim PodIPs down to only one entry (non dual stack).
 	if !utilfeature.DefaultFeatureGate.Enabled(features.IPv6DualStack) &&
@@ -362,6 +369,9 @@ func dropDisabledFields(
 			return true
 		})
 	}
+	if !utilfeature.DefaultFeatureGate.Enabled(features.EphemeralContainers) && !ephemeralContainersInUse(oldPodSpec) {
+		podSpec.EphemeralContainers = nil
+	}
 
 	if (!utilfeature.DefaultFeatureGate.Enabled(features.VolumeSubpath) || !utilfeature.DefaultFeatureGate.Enabled(features.VolumeSubpathEnvExpansion)) && !subpathExprInUse(oldPodSpec) {
 		// drop subpath env expansion from the pod if either of the subpath features is disabled and the old spec did not specify subpath env expansion
@@ -369,6 +379,14 @@ func dropDisabledFields(
 			for i := range c.VolumeMounts {
 				c.VolumeMounts[i].SubPathExpr = ""
 			}
+			return true
+		})
+	}
+
+	if !utilfeature.DefaultFeatureGate.Enabled(features.StartupProbe) && !startupProbeInUse(oldPodSpec) {
+		// drop startupProbe from all containers if the feature is disabled
+		VisitContainers(podSpec, func(c *api.Container) bool {
+			c.StartupProbe = nil
 			return true
 		})
 	}
@@ -400,6 +418,11 @@ func dropDisabledFields(
 		// Set to nil pod's PreemptionPolicy fields if the feature is disabled and the old pod
 		// does not specify any values for these fields.
 		podSpec.PreemptionPolicy = nil
+	}
+
+	if !utilfeature.DefaultFeatureGate.Enabled(features.EvenPodsSpread) && !topologySpreadConstraintsInUse(oldPodSpec) {
+		// Set TopologySpreadConstraints to nil only if feature is disabled and it is not used
+		podSpec.TopologySpreadConstraints = nil
 	}
 }
 
@@ -522,6 +545,13 @@ func dropDisabledCSIVolumeSourceAlphaFields(podSpec, oldPodSpec *api.PodSpec) {
 	}
 }
 
+func ephemeralContainersInUse(podSpec *api.PodSpec) bool {
+	if podSpec == nil {
+		return false
+	}
+	return len(podSpec.EphemeralContainers) > 0
+}
+
 // subpathInUse returns true if the pod spec is non-nil and has a volume mount that makes use of the subPath feature
 func subpathInUse(podSpec *api.PodSpec) bool {
 	if podSpec == nil {
@@ -562,7 +592,14 @@ func overheadInUse(podSpec *api.PodSpec) bool {
 		return true
 	}
 	return false
+}
 
+// topologySpreadConstraintsInUse returns true if the pod spec is non-nil and has a TopologySpreadConstraints slice
+func topologySpreadConstraintsInUse(podSpec *api.PodSpec) bool {
+	if podSpec == nil {
+		return false
+	}
+	return len(podSpec.TopologySpreadConstraints) > 0
 }
 
 // procMountInUse returns true if the pod spec is non-nil and has a SecurityContext's ProcMount field set to a non-default value
@@ -644,7 +681,7 @@ func sysctlsInUse(podSpec *api.PodSpec) bool {
 	return false
 }
 
-// emptyDirSizeLimitInUse returns true if any pod's EptyDir volumes use SizeLimit.
+// emptyDirSizeLimitInUse returns true if any pod's EmptyDir volumes use SizeLimit.
 func emptyDirSizeLimitInUse(podSpec *api.PodSpec) bool {
 	if podSpec == nil {
 		return false
@@ -783,6 +820,24 @@ func subpathExprInUse(podSpec *api.PodSpec) bool {
 				inUse = true
 				return false
 			}
+		}
+		return true
+	})
+
+	return inUse
+}
+
+// startupProbeInUse returns true if the pod spec is non-nil and has a container that has a startupProbe defined
+func startupProbeInUse(podSpec *api.PodSpec) bool {
+	if podSpec == nil {
+		return false
+	}
+
+	var inUse bool
+	VisitContainers(podSpec, func(c *api.Container) bool {
+		if c.StartupProbe != nil {
+			inUse = true
+			return false
 		}
 		return true
 	})
